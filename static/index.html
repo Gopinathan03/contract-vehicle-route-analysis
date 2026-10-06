@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101d30">
+  <title>Contract Vehicle Route Analysis</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark">A</div><div><strong>ABT Route Intelligence</strong><span>OPERATIONS ANALYTICS</span></div></div>
+      <div class="connection"><i></i><span id="db-status">Connecting to PostgreSQL</span></div>
+    </header>
+    <section class="hero">
+      <div class="eyebrow">CONTRACT VEHICLE · FIXED NETWORK</div>
+      <h1>Route performance</h1>
+      <p class="route-title">Coimbatore <b>→</b> Salem <b>→</b> Trichy <b>→</b> Chennai</p>
+      <div class="period-row"><span>ANALYSIS PERIOD</span><strong id="period">Loading…</strong><span class="period-badge">ROLLING 1 YEAR</span></div>
+    </section>
+    <section class="kpis" aria-label="Route summary">
+      <article class="kpi"><div class="kpi-label">LEG MOVEMENTS</div><strong id="trip-count">—</strong><small>Across the three route legs</small></article>
+      <article class="kpi"><div class="kpi-label">LOAD UTILIZATION</div><strong id="utilization">—</strong><small>Actual load against capacity</small></article>
+      <article class="kpi"><div class="kpi-label">AVERAGE TRAVEL TIME</div><strong id="travel-time">—</strong><small>Matched dispatch and arrival events</small></article>
+      <article class="kpi"><div class="kpi-label">AVERAGE CONTRACT PRICE</div><strong id="contract-price">—</strong><small>Stored contract hire amount</small></article>
+    </section>
+    <section class="panel network-panel">
+      <div class="section-head"><div><div class="eyebrow">FIXED ROUTE NETWORK</div><h2>Three legs, four hubs</h2></div><span class="network-caption">Contract vehicles only</span></div>
+      <div id="network" class="network"><div class="loading">Loading route analysis…</div></div>
+    </section>
+    <section class="panel">
+      <div class="section-head"><div><div class="eyebrow">HISTORICAL PERFORMANCE</div><h2>Route segment details</h2></div></div>
+      <div class="table-wrap"><table><thead><tr><th>ROUTE SEGMENT</th><th>STATUS</th><th>TRIPS</th><th>TOTAL LOAD</th><th>AVG LOAD</th><th>AVG CAPACITY</th><th>UTILIZATION</th><th>DEPARTURE / ARRIVAL</th><th>AVG TIME</th><th>AVG CONTRACT PRICE</th></tr></thead><tbody id="segments"><tr><td colspan="10" class="loading">Loading segment metrics…</td></tr></tbody></table></div>
+    </section>
+    <section class="bottom-grid">
+      <article class="panel overall"><div class="eyebrow">ROUTE RECOMMENDATION</div><div id="route-status" class="status-pill">Loading</div><p id="route-reason">Reading historical contract trip data.</p></article>
+      <article class="panel data-notes"><div class="eyebrow">DATA NOTES</div><ul id="notes"><li>Values load from PostgreSQL.</li></ul></article>
+    </section>
+    <footer>Historical operations · PostgreSQL source · Read-only analysis</footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
