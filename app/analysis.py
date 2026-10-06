@@ -8,7 +8,7 @@ from psycopg import sql
 
 from app.config import Settings, get_settings
 from app.database import read_connection
-from app.models import GraphEdge, GraphNode, Metrics, NetworkGraph, Recommendation, RouteAnalysis, Segment, Summary
+from app.models import GraphEdge, GraphNode, Metrics, NetworkGraph, Recommendation, RouteAnalysis, RouteOption, Segment, Summary
 
 HUBS = ("Coimbatore", "Salem", "Trichy", "Chennai")
 
@@ -57,6 +57,8 @@ def _status(metrics: Metrics, settings: Settings) -> tuple[str, str]:
 
 
 def _recommend(segments: list[Segment]) -> Recommendation:
+    if not segments:
+        return Recommendation(status="INSUFFICIENT DATA", reason="No historical Coimbatore-to-Chennai route combination was found for this analysis period.")
     order = {"POOR": 0, "NEEDS ATTENTION": 1, "INSUFFICIENT DATA": 2, "GOOD": 3}
     worst = min(segments, key=lambda item: order[item.status])
     if worst.status == "INSUFFICIENT DATA":
@@ -98,6 +100,7 @@ def _aggregate(rows: list[dict[str, Any]], trip_rows: list[dict[str, Any]], sett
 def analyze(start: date, end: date) -> RouteAnalysis:
     settings = get_settings()
     codes = settings.station_codes
+    city_by_code = dict(zip(codes, HUBS))
     route_table = sql.Identifier(settings.db_schema, "route")
     header_table = sql.Identifier(settings.db_schema, "tbl_despatch_header")
     contract_table = sql.Identifier(settings.db_schema, "tbl_contvehent")
@@ -105,14 +108,19 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     detail_table = sql.Identifier(settings.db_schema, "tbl_despatch_detl")
     waybill_table = sql.Identifier(settings.db_schema, "wbhead")
     events_table = sql.Identifier(settings.db_schema, "tbl_veharrival_despatch")
-    legs = ((codes[0], codes[1]), (codes[1], codes[2]), (codes[2], codes[3]))
-
-    # Fetch the small route dictionary first, then query only trips in those direct legs.
+    # Read direct links among the configured hubs. Historical route use below
+    # determines which links and complete origin-to-destination paths exist.
     route_query = sql.SQL("""
         SELECT DISTINCT route, start, stop FROM {route}
         WHERE type = 'R' AND upper(trim(via)) = 'DIR'
-          AND ((start = %s AND stop = %s) OR (start = %s AND stop = %s) OR (start = %s AND stop = %s))
+          AND start = ANY(%s) AND stop = ANY(%s) AND start <> stop
     """).format(route=route_table)
+    historical_trip_query = sql.SQL("""
+        SELECT DISTINCT d.route
+        FROM {header} d
+        JOIN {contract} ct ON upper(trim(ct.tssno)) = upper(trim(d.tssno))
+        WHERE d.route = ANY(%s) AND d.tssno IS NOT NULL
+    """).format(header=header_table, contract=contract_table)
     trip_query = sql.SQL("""
         SELECT DISTINCT d.tssno, upper(trim(d.vehicleno)) AS vehicle_no,
                d.tssdate::date AS trip_date, d.route AS route_code,
@@ -124,18 +132,23 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     """).format(header=header_table, contract=contract_table)
 
     with read_connection() as conn, conn.cursor() as cursor:
-        cursor.execute(route_query, (codes[0], codes[1], codes[1], codes[2], codes[2], codes[3]))
+        cursor.execute(route_query, (list(codes), list(codes)))
         route_rows = cursor.fetchall()
-        route_to_leg: dict[str, int] = {}
-        for row in route_rows:
-            for i, pair in enumerate(legs, start=1):
-                if (row["start"], row["stop"]) == pair:
-                    route_to_leg[row["route"]] = i
-                    break
-        route_codes = list(route_to_leg)
-
+        route_to_edge = {
+            row["route"]: (row["start"], row["stop"])
+            for row in route_rows
+            if row["route"] and row["start"] in city_by_code and row["stop"] in city_by_code
+        }
+        route_codes = list(route_to_edge)
         if route_codes:
-            cursor.execute(trip_query, (start, end, route_codes))
+            cursor.execute(historical_trip_query, (route_codes,))
+            used_codes = {row["route"] for row in cursor.fetchall()}
+        else:
+            used_codes = set()
+        used_route_to_edge = {code: pair for code, pair in route_to_edge.items() if code in used_codes}
+
+        if used_route_to_edge:
+            cursor.execute(trip_query, (start, end, list(used_route_to_edge)))
             trip_rows = [dict(row) for row in cursor.fetchall()]
         else:
             trip_rows = []
@@ -182,19 +195,19 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             cursor.execute(event_query, (tss_numbers,))
             movements = {row["tssno"]: (row["departure"], row["arrival"]) for row in cursor.fetchall()}
 
-    rows_by_leg: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    trips_by_leg: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    rows_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    trips_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for trip in trip_rows:
-        leg_no = route_to_leg.get(trip["route_code"])
-        if leg_no is None:
+        edge = used_route_to_edge.get(trip["route_code"])
+        if edge is None:
             continue
-        trips_by_leg[leg_no].append(trip)
+        trips_by_edge[edge].append(trip)
         candidate_capacities = capacities.get(trip["vehicle_no"] or "", [])
         valid_capacity = [item for item in candidate_capacities if item[0] is not None and item[0] <= trip["trip_date"]]
         capacity = valid_capacity[-1][1] if valid_capacity else None
         departure, arrival = movements.get(trip["tssno"].strip().upper(), (None, None))
         travel_hours = (arrival - departure).total_seconds() / 3600 if departure and arrival and arrival > departure else None
-        rows_by_leg[leg_no].append({
+        rows_by_edge[edge].append({
             "load": loads.get(trip["tssno"]),
             "capacity": capacity,
             "price": _number(trip["contract_price"]),
@@ -205,22 +218,53 @@ def analyze(start: date, end: date) -> RouteAnalysis:
 
     graph = nx.DiGraph()
     graph.add_nodes_from(HUBS)
-    segments: list[Segment] = []
+    segments_by_edge: dict[tuple[str, str], Segment] = {}
     all_rows: list[dict[str, Any]] = []
-    for leg_no, (source, destination) in enumerate(zip(HUBS, HUBS[1:]), start=1):
-        trip_group = trips_by_leg[leg_no]
-        metrics, status, reason = _aggregate(rows_by_leg[leg_no], trip_group, settings)
+    used_edges = sorted(set(used_route_to_edge.values()), key=lambda pair: (HUBS.index(city_by_code[pair[0]]), HUBS.index(city_by_code[pair[1]])))
+    for source_code, destination_code in used_edges:
+        source, destination = city_by_code[source_code], city_by_code[destination_code]
+        edge_key = (source_code, destination_code)
+        trip_group = trips_by_edge[edge_key]
+        metrics, status, reason = _aggregate(rows_by_edge[edge_key], trip_group, settings)
         graph.add_edge(source, destination, **metrics.model_dump(), status=status, reason=reason)
         edge = graph[source][destination]
-        segments.append(Segment(source=source, destination=destination, status=edge["status"], reason=edge["reason"], metrics=metrics))
-        all_rows.extend(rows_by_leg[leg_no])
+        segments_by_edge[(source, destination)] = Segment(source=source, destination=destination, status=edge["status"], reason=edge["reason"], metrics=metrics)
+
+    route_codes_graph = nx.DiGraph()
+    route_codes_graph.add_nodes_from(codes)
+    route_codes_graph.add_edges_from(used_route_to_edge.values())
+    paths = sorted(
+        nx.all_simple_paths(route_codes_graph, codes[0], codes[-1]),
+        key=lambda path: (len(path), tuple(path)),
+    ) if nx.has_path(route_codes_graph, codes[0], codes[-1]) else []
+    path_edges = {(a, b) for path in paths for a, b in zip(path, path[1:])}
+    used_edges = [edge for edge in used_edges if edge in path_edges]
+    graph.remove_edges_from([
+        (city_by_code[a], city_by_code[b])
+        for a, b in route_codes_graph.edges
+        if (a, b) not in path_edges
+    ])
+    segments_by_edge = {
+        (city_by_code[a], city_by_code[b]): segments_by_edge[(city_by_code[a], city_by_code[b])]
+        for a, b in path_edges
+    }
+    all_rows = [row for edge in used_edges for row in rows_by_edge[edge]]
+    alternatives = []
+    for path in paths:
+        path_legs = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in zip(path, path[1:])]
+        alternatives.append(RouteOption(
+            cities=[city_by_code[code] for code in path],
+            status=min(path_legs, key=lambda leg: {"POOR": 0, "NEEDS ATTENTION": 1, "INSUFFICIENT DATA": 2, "GOOD": 3}[leg.status]).status,
+            legs=path_legs,
+        ))
+    segments = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in used_edges]
 
     summary_loads = [r["load"] for r in all_rows if r["load"] is not None]
     summary_pairs = [r for r in all_rows if r["load"] is not None and r["capacity"] is not None and r["capacity"] > 0]
     summary_durations = [r["travel_hours"] for r in all_rows if r["travel_hours"] is not None and r["travel_hours"] > 0]
     summary_prices = [r["price"] for r in all_rows if r["price"] is not None]
     summary = Summary(
-        trip_count=sum(len(trips_by_leg[i]) for i in (1, 2, 3)),
+        trip_count=sum(len(trips_by_edge[edge]) for edge in used_edges),
         average_load=mean(summary_loads) if summary_loads else None,
         load_utilization_pct=(100 * sum(r["load"] for r in summary_pairs) * settings.load_to_capacity_factor / sum(r["capacity"] for r in summary_pairs)) if summary_pairs and settings.load_to_capacity_factor is not None else None,
         average_travel_hours=mean(summary_durations) if summary_durations else None,
@@ -229,7 +273,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     notes = [
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
         f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
-        "Route summary trip count represents leg movements summed across the three legs; the database does not store one through-route trip identity spanning all legs.",
+        "Route combinations are discovered from every Coimbatore-to-Chennai simple path whose direct legs appear in historical contract trips. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",
     ]
@@ -249,4 +293,5 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         ],
     )
     return RouteAnalysis(route=list(HUBS), period={"start": start, "end": end}, summary=summary,
-                         graph=graph_dto, segments=segments, recommendation=_recommend(segments), data_notes=notes)
+                         graph=graph_dto, alternatives=alternatives, segments=segments,
+                         recommendation=_recommend(segments), data_notes=notes)

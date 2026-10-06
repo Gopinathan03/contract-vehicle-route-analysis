@@ -57,6 +57,12 @@ class NetworkGraph(BaseModel):
     edges: list[GraphEdge]
 
 
+class RouteOption(BaseModel):
+    cities: list[str]
+    status: LegStatus
+    legs: list[Segment]
+
+
 class Summary(BaseModel):
     trip_count: int
     average_load: float | None
@@ -73,6 +79,7 @@ class Recommendation(BaseModel):
 class RouteAnalysis(BaseModel):
     route: list[str]
     graph: NetworkGraph
+    alternatives: list[RouteOption]
     period: Period
     vehicle_type: Literal["CONTRACT"] = "CONTRACT"
     summary: Summary
