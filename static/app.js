@@ -2,8 +2,6 @@ const API = '/api/v1/network/contract-route-analysis';
 const fmt = (n, digits = 1) => n == null ? 'Insufficient Data' : Number(n).toLocaleString(undefined, {maximumFractionDigits:digits});
 const fmtHours = n => n == null ? 'Insufficient Data' : `${fmt(n)} h`;
 const fmtMoment = s => s == null ? 'Insufficient Data' : new Date(s).toLocaleString();
-const fmtTravelRange = m => m.average_travel_hours == null ? 'Insufficient Data' : `Avg ${fmtHours(m.average_travel_hours)}<br>Min ${fmtHours(m.minimum_travel_hours)} · Max ${fmtHours(m.maximum_travel_hours)}`;
-const fmtPriceRange = m => m.average_contract_vehicle_price == null ? 'Insufficient Data' : `Avg ${fmt(m.average_contract_vehicle_price)}<br>Min ${fmt(m.minimum_contract_vehicle_price)} · Max ${fmt(m.maximum_contract_vehicle_price)}`;
 const statusClass = value => value === 'GOOD' || value === 'GOOD ROUTE' ? 'good' : value === 'POOR' || value === 'POOR ROUTE' ? 'poor' : value === 'NEEDS ATTENTION' ? 'attention' : 'insufficient';
 function metric(value, suffix = '') { return value == null ? 'Insufficient Data' : `${fmt(value)}${suffix}`; }
 
@@ -129,7 +127,7 @@ async function load() {
       .filter(s => !(s.metrics.trip_count === 0 && s.status === 'INSUFFICIENT DATA'))
       .map(s => {
       const m = s.metrics;
-      return `<tr><td>${s.source} → ${s.destination}</td><td><span class="pill ${statusClass(s.status)}">${s.status}</span></td><td>${fmt(m.trip_count,0)}</td><td>${metric(m.total_load)}</td><td>${metric(m.average_load)}</td><td>${metric(m.average_capacity)}</td><td>${metric(m.load_utilization_pct,'%')}</td><td>${fmtMoment(m.earliest_departure)}<br>— ${fmtMoment(m.latest_arrival)}</td><td>${fmtTravelRange(m)}</td><td>${fmtPriceRange(m)}</td></tr>`;
+      return `<tr><td>${s.source} → ${s.destination}</td><td><span class="pill ${statusClass(s.status)}">${s.status}</span></td><td>${fmt(m.trip_count,0)}</td><td>${metric(m.total_load)}</td><td>${metric(m.average_load)}</td><td>${metric(m.average_capacity)}</td><td>${metric(m.load_utilization_pct,'%')}</td><td>${fmtMoment(m.earliest_departure)}<br>— ${fmtMoment(m.latest_arrival)}</td><td>${fmtHours(m.average_travel_hours)}</td><td>${metric(m.average_contract_vehicle_price)}</td></tr>`;
       }).join('');
   } catch (error) {
     document.getElementById('db-status').textContent = 'Database unavailable';
