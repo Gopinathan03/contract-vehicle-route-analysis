@@ -108,19 +108,13 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     detail_table = sql.Identifier(settings.db_schema, "tbl_despatch_detl")
     waybill_table = sql.Identifier(settings.db_schema, "wbhead")
     events_table = sql.Identifier(settings.db_schema, "tbl_veharrival_despatch")
-    # Read direct links among the configured hubs. Historical route use below
-    # determines which links and complete origin-to-destination paths exist.
+    # Read direct links among the configured hubs. Contract trips in the
+    # requested analysis window determine which links and paths are active.
     route_query = sql.SQL("""
         SELECT DISTINCT route, start, stop FROM {route}
         WHERE type = 'R' AND upper(trim(via)) = 'DIR'
           AND start = ANY(%s) AND stop = ANY(%s) AND start <> stop
     """).format(route=route_table)
-    historical_trip_query = sql.SQL("""
-        SELECT DISTINCT d.route
-        FROM {header} d
-        JOIN {contract} ct ON upper(trim(ct.tssno)) = upper(trim(d.tssno))
-        WHERE d.route = ANY(%s) AND d.tssno IS NOT NULL
-    """).format(header=header_table, contract=contract_table)
     trip_query = sql.SQL("""
         SELECT DISTINCT d.tssno, upper(trim(d.vehicleno)) AS vehicle_no,
                d.tssdate::date AS trip_date, d.route AS route_code,
@@ -141,17 +135,12 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         }
         route_codes = list(route_to_edge)
         if route_codes:
-            cursor.execute(historical_trip_query, (route_codes,))
-            used_codes = {row["route"] for row in cursor.fetchall()}
-        else:
-            used_codes = set()
-        used_route_to_edge = {code: pair for code, pair in route_to_edge.items() if code in used_codes}
-
-        if used_route_to_edge:
-            cursor.execute(trip_query, (start, end, list(used_route_to_edge)))
+            cursor.execute(trip_query, (start, end, route_codes))
             trip_rows = [dict(row) for row in cursor.fetchall()]
         else:
             trip_rows = []
+        active_codes = {row["route_code"] for row in trip_rows}
+        used_route_to_edge = {code: pair for code, pair in route_to_edge.items() if code in active_codes}
 
         tss_numbers = list({row["tssno"] for row in trip_rows if row["tssno"]})
         vehicle_numbers = list({row["vehicle_no"] for row in trip_rows if row["vehicle_no"]})
@@ -220,7 +209,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     graph.add_nodes_from(HUBS)
     segments_by_edge: dict[tuple[str, str], Segment] = {}
     all_rows: list[dict[str, Any]] = []
-    used_edges = sorted(set(used_route_to_edge.values()), key=lambda pair: (HUBS.index(city_by_code[pair[0]]), HUBS.index(city_by_code[pair[1]])))
+    used_edges = sorted(set(trips_by_edge), key=lambda pair: (HUBS.index(city_by_code[pair[0]]), HUBS.index(city_by_code[pair[1]])))
     for source_code, destination_code in used_edges:
         source, destination = city_by_code[source_code], city_by_code[destination_code]
         edge_key = (source_code, destination_code)
@@ -232,7 +221,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
 
     route_codes_graph = nx.DiGraph()
     route_codes_graph.add_nodes_from(codes)
-    route_codes_graph.add_edges_from(used_route_to_edge.values())
+    route_codes_graph.add_edges_from(used_edges)
     paths = sorted(
         nx.all_simple_paths(route_codes_graph, codes[0], codes[-1]),
         key=lambda path: (len(path), tuple(path)),
@@ -273,7 +262,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     notes = [
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
         f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
-        "Route combinations are discovered from every Coimbatore-to-Chennai simple path whose direct legs appear in historical contract trips. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
+        "Route combinations include only Coimbatore-to-Chennai paths whose direct legs have contract trips in the requested analysis window. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",
     ]
