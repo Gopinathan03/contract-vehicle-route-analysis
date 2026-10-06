@@ -83,6 +83,7 @@
 .route-status-dot.poor { background: #d64545; }
 .route-status-dot.insufficient { background: #8996a0; }
 .route-options-empty { margin: 0; padding: 16px; border-radius: 10px; background: #f5f8f7; color: #748481; font-size: 12px; }
+.leg-trip-list { color: #728381; font-size: 10px; line-height: 1.7; white-space: normal; min-width: 190px; }
 @media (max-width: 700px) {
   .network-panel { padding: 18px 14px; }
   #route-map { height: max(420px, 62vh); border-radius: 12px; }

@@ -1,7 +1,6 @@
 const API = '/api/v1/network/contract-route-analysis';
 const fmt = (n, digits = 1) => n == null ? 'Insufficient Data' : Number(n).toLocaleString(undefined, {maximumFractionDigits:digits});
 const fmtHours = n => n == null ? 'Insufficient Data' : `${fmt(n)} h`;
-const fmtMoment = s => s == null ? 'Insufficient Data' : new Date(s).toLocaleString();
 const statusClass = value => value === 'GOOD' || value === 'GOOD ROUTE' ? 'good' : value === 'POOR' || value === 'POOR ROUTE' ? 'poor' : value === 'NEEDS ATTENTION' ? 'attention' : 'insufficient';
 function metric(value, suffix = '') { return value == null ? 'Insufficient Data' : `${fmt(value)}${suffix}`; }
 
@@ -123,17 +122,21 @@ async function load() {
     document.getElementById('travel-time').textContent = fmtHours(data.summary.average_travel_hours);
     document.getElementById('contract-price').textContent = metric(data.summary.average_contract_vehicle_price);
     renderNetwork(document.getElementById('network'), {...data.graph, alternatives:data.alternatives});
-    document.getElementById('segments').innerHTML = data.segments
-      .filter(s => !(s.metrics.trip_count === 0 && s.status === 'INSUFFICIENT DATA'))
-      .map(s => {
-      const m = s.metrics;
-      return `<tr><td>${s.source} → ${s.destination}</td><td><span class="pill ${statusClass(s.status)}">${s.status}</span></td><td>${fmt(m.trip_count,0)}</td><td>${metric(m.total_load)}</td><td>${metric(m.average_load)}</td><td>${metric(m.average_capacity)}</td><td>${metric(m.load_utilization_pct,'%')}</td><td>${fmtMoment(m.earliest_departure)}<br>— ${fmtMoment(m.latest_arrival)}</td><td>${fmtHours(m.average_travel_hours)}</td><td>${metric(m.average_contract_vehicle_price)}</td></tr>`;
-      }).join('');
+    document.getElementById('alternatives').innerHTML = (data.alternatives || []).map(option => {
+      const weightedAverage = (valueKey, countKey) => {
+        const valid = option.legs.filter(leg => leg.metrics[valueKey] != null && leg.metrics[countKey] > 0);
+        const count = valid.reduce((total, leg) => total + leg.metrics[countKey], 0);
+        return count ? valid.reduce((total, leg) => total + leg.metrics[valueKey] * leg.metrics[countKey], 0) / count : null;
+      };
+      const legTrips = option.legs.map(leg => `${leg.source} → ${leg.destination}: ${fmt(leg.metrics.trip_count,0)}`).join('<br>');
+      const movements = option.legs.reduce((total, leg) => total + leg.metrics.trip_count, 0);
+      return `<tr><td>${option.cities.join(' → ')}</td><td><span class="pill ${statusClass(option.status)}">${option.status}</span></td><td class="leg-trip-list">${legTrips}</td><td>${fmt(movements,0)}</td><td>${fmtHours(weightedAverage('average_travel_hours','travel_time_trip_count'))}</td><td>${metric(weightedAverage('average_contract_vehicle_price','contract_price_trip_count'))}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="loading">No route combinations with trips were found.</td></tr>';
   } catch (error) {
     document.getElementById('db-status').textContent = 'Database unavailable';
     document.getElementById('network').innerHTML = `<div class="loading">${error.message}</div>`;
     document.getElementById('route-options').textContent = '';
-    document.getElementById('segments').innerHTML = `<tr><td colspan="10" class="loading">${error.message}</td></tr>`;
+    document.getElementById('alternatives').innerHTML = `<tr><td colspan="6" class="loading">${error.message}</td></tr>`;
   }
 }
 load();
