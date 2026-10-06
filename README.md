@@ -26,7 +26,7 @@ The local database schema was inspected read-only. The implementation uses these
 
 The fixed station codes used in this database are Coimbatore `CBETR`, Salem `SALTR`, Trichy `TPJTR`, and Chennai `MASTR`. Only route rows with type `R`, direct via `DIR`, and those consecutive endpoints are considered. Contract membership is identified by a matching `tbl_contvehent.tssno`; owned/other vehicle types are not used as the contract filter. No foreign-key constraints were declared for these legacy relationships, so the joins use the observed business keys.
 
-Charge weights are shown in the units stored in `wbhead.chargewt`; the schema does not define a unit. Since the database does not establish that `chargewt` and vehicle `capacity` use compatible units, load utilization remains Insufficient Data by default. Set `LOAD_TO_CAPACITY_FACTOR` only after confirming the conversion from charge-weight units to capacity units. Travel duration is calculated only when a matching `Despatch` and `Arrival` event exists for the trip. The summary trip count is the sum of the three leg movement counts because this schema does not store one through-route trip identity spanning all three legs.
+`wbhead.chargewt` is treated as kilograms and `tbl_tss_truck.capacity` as metric tons, using `LOAD_TO_CAPACITY_FACTOR=0.001`. Change this setting if the data source's units differ. Travel duration is calculated only when a matching `Despatch` and `Arrival` event exists for the trip. The summary trip count is the sum of the three leg movement counts because this schema does not store one through-route trip identity spanning all three legs.
 
 ## Run locally
 
@@ -58,6 +58,6 @@ Optional ISO date parameters: `startDate`, `endDate`. Without parameters, the ra
 
 ## Status thresholds
 
-The initial thresholds in `.env.example` are provisional configuration defaults, not approved business targets: utilization at least 70% is eligible for `GOOD`, under 40% is `POOR`, average travel above 12 hours triggers `NEEDS ATTENTION`, and above 18 hours triggers `POOR`. These are deliberately exposed as environment settings so the business can replace them. Price is displayed and summarized, but is not used to judge performance because no price target was provided.
+The initial thresholds in `.env.example` are provisional configuration defaults, not approved business targets: utilization from 70% through 100% is eligible for `GOOD`, under 40% is `POOR`, above capacity is `POOR`, average travel above 12 hours triggers `NEEDS ATTENTION`, and above 18 hours triggers `POOR`. These are deliberately exposed as environment settings so the business can replace them. Price is displayed and summarized, but is not used to judge performance because no price target was provided.
 
 If a required KPI is absent, the API returns `null` and the UI displays “Insufficient Data”; it does not replace missing fields with zero.

@@ -32,7 +32,9 @@ def _status(metrics: Metrics, settings: Settings) -> tuple[str, str]:
     poor_reasons: list[str] = []
     attention_reasons: list[str] = []
     if utilization is not None:
-        if utilization < settings.attention_utilization_min_pct:
+        if utilization > settings.maximum_utilization_pct:
+            poor_reasons.append(f"load utilization is {utilization:.1f}%, above vehicle capacity")
+        elif utilization < settings.attention_utilization_min_pct:
             poor_reasons.append(f"load utilization is {utilization:.1f}%")
         elif utilization < settings.good_utilization_min_pct:
             attention_reasons.append(f"load utilization is {utilization:.1f}%")
@@ -226,7 +228,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     )
     notes = [
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
-        "Load utilization is Insufficient Data until LOAD_TO_CAPACITY_FACTOR is configured: the database does not declare compatible units for chargewt and capacity.",
+        f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
         "Route summary trip count represents leg movements summed across the three legs; the database does not store one through-route trip identity spanning all legs.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",

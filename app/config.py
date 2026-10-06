@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     load_to_capacity_factor: float | None = None
     good_utilization_min_pct: float = 70
     attention_utilization_min_pct: float = 40
+    maximum_utilization_pct: float = 100
     attention_max_travel_hours: float = 12
     poor_max_travel_hours: float = 18
 
