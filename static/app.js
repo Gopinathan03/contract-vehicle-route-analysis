@@ -125,10 +125,12 @@ async function load() {
     document.getElementById('travel-time').textContent = fmtHours(data.summary.average_travel_hours);
     document.getElementById('contract-price').textContent = metric(data.summary.average_contract_vehicle_price);
     renderNetwork(document.getElementById('network'), {...data.graph, alternatives:data.alternatives});
-    document.getElementById('segments').innerHTML = data.segments.map(s => {
+    document.getElementById('segments').innerHTML = data.segments
+      .filter(s => !(s.metrics.trip_count === 0 && s.status === 'INSUFFICIENT DATA'))
+      .map(s => {
       const m = s.metrics;
       return `<tr><td>${s.source} → ${s.destination}</td><td><span class="pill ${statusClass(s.status)}">${s.status}</span></td><td>${fmt(m.trip_count,0)}</td><td>${metric(m.total_load)}</td><td>${metric(m.average_load)}</td><td>${metric(m.average_capacity)}</td><td>${metric(m.load_utilization_pct,'%')}</td><td>${fmtMoment(m.earliest_departure)}<br>— ${fmtMoment(m.latest_arrival)}</td><td>${fmtTravelRange(m)}</td><td>${fmtPriceRange(m)}</td></tr>`;
-    }).join('');
+      }).join('');
   } catch (error) {
     document.getElementById('db-status').textContent = 'Database unavailable';
     document.getElementById('network').innerHTML = `<div class="loading">${error.message}</div>`;
