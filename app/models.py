@@ -61,6 +61,8 @@ class RouteOption(BaseModel):
     cities: list[str]
     status: LegStatus
     legs: list[Segment]
+    average_full_route_travel_hours: float | None
+    average_full_route_contract_price: float | None
 
 
 class Summary(BaseModel):

@@ -245,6 +245,14 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             cities=[city_by_code[code] for code in path],
             status=min(path_legs, key=lambda leg: {"POOR": 0, "NEEDS ATTENTION": 1, "INSUFFICIENT DATA": 2, "GOOD": 3}[leg.status]).status,
             legs=path_legs,
+            average_full_route_travel_hours=(
+                sum(leg.metrics.average_travel_hours for leg in path_legs)
+                if all(leg.metrics.average_travel_hours is not None for leg in path_legs) else None
+            ),
+            average_full_route_contract_price=(
+                sum(leg.metrics.average_contract_vehicle_price for leg in path_legs)
+                if all(leg.metrics.average_contract_vehicle_price is not None for leg in path_legs) else None
+            ),
         ))
     segments = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in used_edges]
 
@@ -263,6 +271,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
         f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
         "Route combinations include only Coimbatore-to-Chennai paths whose direct legs have contract trips in the requested analysis window. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
+        "Full-route average time and contract cost are estimated by summing the average values for each leg; individual legs are not matched to the same shipment.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",
     ]

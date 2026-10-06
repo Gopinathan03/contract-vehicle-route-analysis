@@ -123,14 +123,9 @@ async function load() {
     document.getElementById('contract-price').textContent = metric(data.summary.average_contract_vehicle_price);
     renderNetwork(document.getElementById('network'), {...data.graph, alternatives:data.alternatives});
     document.getElementById('alternatives').innerHTML = (data.alternatives || []).map(option => {
-      const weightedAverage = (valueKey, countKey) => {
-        const valid = option.legs.filter(leg => leg.metrics[valueKey] != null && leg.metrics[countKey] > 0);
-        const count = valid.reduce((total, leg) => total + leg.metrics[countKey], 0);
-        return count ? valid.reduce((total, leg) => total + leg.metrics[valueKey] * leg.metrics[countKey], 0) / count : null;
-      };
       const legTrips = option.legs.map(leg => `${leg.source} → ${leg.destination}: ${fmt(leg.metrics.trip_count,0)}`).join('<br>');
       const movements = option.legs.reduce((total, leg) => total + leg.metrics.trip_count, 0);
-      return `<tr><td>${option.cities.join(' → ')}</td><td><span class="pill ${statusClass(option.status)}">${option.status}</span></td><td class="leg-trip-list">${legTrips}</td><td>${fmt(movements,0)}</td><td>${fmtHours(weightedAverage('average_travel_hours','travel_time_trip_count'))}</td><td>${metric(weightedAverage('average_contract_vehicle_price','contract_price_trip_count'))}</td></tr>`;
+      return `<tr><td>${option.cities.join(' → ')}</td><td><span class="pill ${statusClass(option.status)}">${option.status}</span></td><td class="leg-trip-list">${legTrips}</td><td>${fmt(movements,0)}</td><td>${fmtHours(option.average_full_route_travel_hours)}</td><td>${metric(option.average_full_route_contract_price)}</td></tr>`;
     }).join('') || '<tr><td colspan="6" class="loading">No route combinations with trips were found.</td></tr>';
   } catch (error) {
     document.getElementById('db-status').textContent = 'Database unavailable';
