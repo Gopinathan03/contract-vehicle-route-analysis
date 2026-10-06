@@ -157,9 +157,9 @@ def analyze(start: date, end: date) -> RouteAnalysis:
 
         if tss_numbers:
             load_query = sql.SQL("""
-                SELECT tssno, sum(actualwt)::double precision AS load
+                SELECT tssno, sum(chargewt)::double precision AS load
                 FROM (
-                    SELECT DISTINCT dd.tssno, dd.prefix, dd.wayno, w.actualwt
+                    SELECT DISTINCT dd.tssno, dd.prefix, dd.wayno, w.chargewt
                     FROM {detail} dd
                     JOIN {waybill} w ON w.prefix = dd.prefix AND w.wayno = dd.wayno
                     WHERE dd.tssno = ANY(%s)
@@ -225,8 +225,8 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         average_contract_vehicle_price=mean(summary_prices) if summary_prices else None,
     )
     notes = [
-        "Load is summed from dispatched waybills joined to wbhead.actualwt; values retain the database's unspecified unit.",
-        "Load utilization is Insufficient Data until LOAD_TO_CAPACITY_FACTOR is configured: the database does not declare compatible units for actualwt and capacity.",
+        "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
+        "Load utilization is Insufficient Data until LOAD_TO_CAPACITY_FACTOR is configured: the database does not declare compatible units for chargewt and capacity.",
         "Route summary trip count represents leg movements summed across the three legs; the database does not store one through-route trip identity spanning all legs.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",

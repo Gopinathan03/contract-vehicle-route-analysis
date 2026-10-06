@@ -20,13 +20,13 @@ The local database schema was inspected read-only. The implementation uses these
 | Dated trip and vehicle | `dbo.tbl_despatch_header` (`tssno`, `tssdate`, `vehicleno`, `route`) |
 | Contract trip marker and stored hire amount | `dbo.tbl_contvehent` (`tssno`, `tothire`) |
 | Dispatched waybill relationship | `dbo.tbl_despatch_detl` (`tssno`, `prefix`, `wayno`) |
-| Actual waybill weight | `dbo.wbhead` (`prefix`, `wayno`, `actualwt`) |
+| Charge waybill weight used for load analysis | `dbo.wbhead` (`prefix`, `wayno`, `chargewt`) |
 | Vehicle capacity | `dbo.tbl_tss_truck` (`regno`, `capacity`) |
 | Physical dispatch and arrival events | `dbo.tbl_veharrival_despatch` (`tssno`, `type`, `date`, `time`) |
 
 The fixed station codes used in this database are Coimbatore `CBETR`, Salem `SALTR`, Trichy `TPJTR`, and Chennai `MASTR`. Only route rows with type `R`, direct via `DIR`, and those consecutive endpoints are considered. Contract membership is identified by a matching `tbl_contvehent.tssno`; owned/other vehicle types are not used as the contract filter. No foreign-key constraints were declared for these legacy relationships, so the joins use the observed business keys.
 
-Weights are shown in the units stored in `wbhead.actualwt`; the schema does not define a unit. Since the database does not establish that `actualwt` and vehicle `capacity` use compatible units, load utilization remains Insufficient Data by default. Set `LOAD_TO_CAPACITY_FACTOR` only after confirming the conversion from actual weight units to capacity units. Travel duration is calculated only when a matching `Despatch` and `Arrival` event exists for the trip. The summary trip count is the sum of the three leg movement counts because this schema does not store one through-route trip identity spanning all three legs.
+Charge weights are shown in the units stored in `wbhead.chargewt`; the schema does not define a unit. Since the database does not establish that `chargewt` and vehicle `capacity` use compatible units, load utilization remains Insufficient Data by default. Set `LOAD_TO_CAPACITY_FACTOR` only after confirming the conversion from charge-weight units to capacity units. Travel duration is calculated only when a matching `Despatch` and `Arrival` event exists for the trip. The summary trip count is the sum of the three leg movement counts because this schema does not store one through-route trip identity spanning all three legs.
 
 ## Run locally
 
