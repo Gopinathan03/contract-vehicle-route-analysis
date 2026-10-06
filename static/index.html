@@ -6,6 +6,7 @@
   <title>Contract Vehicle Route Analysis</title>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/graph.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 </head>
 <body>
   <main class="shell">
@@ -26,7 +27,7 @@
       <article class="kpi"><div class="kpi-label">AVERAGE CONTRACT PRICE</div><strong id="contract-price">—</strong><small>Stored contract hire amount</small></article>
     </section>
     <section class="panel network-panel">
-      <div class="section-head"><div><div class="eyebrow">NETWORKX DIRECTED GRAPH</div><h2>Four hubs · three connected legs</h2></div><span class="network-caption">Contract vehicles only</span></div>
+      <div class="section-head"><div><div class="eyebrow">TAMIL NADU ROUTE MAP</div><h2>Four hubs · three connected legs</h2></div><span class="network-caption">Contract vehicles only</span></div>
       <div id="network" class="graph-wrap"><div class="loading">Loading route analysis…</div></div>
       <div class="graph-legend"><span><i class="legend-good"></i>Good</span><span><i class="legend-attention"></i>Needs attention</span><span><i class="legend-poor"></i>Poor</span><span><i class="legend-insufficient"></i>Insufficient data</span></div>
     </section>
@@ -40,6 +41,8 @@
     </section>
     <footer>Historical operations · PostgreSQL source · Read-only analysis</footer>
   </main>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet-polylinedecorator@1.6.0/dist/leaflet.polylineDecorator.js"></script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

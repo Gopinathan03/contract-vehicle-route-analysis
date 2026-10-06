@@ -8,48 +8,52 @@ const statusClass = value => value === 'GOOD' || value === 'GOOD ROUTE' ? 'good'
 function metric(value, suffix = '') { return value == null ? 'Insufficient Data' : `${fmt(value)}${suffix}`; }
 
 const svgNS = 'http://www.w3.org/2000/svg';
-const graphColors = {good:'#36c99a',attention:'#f0b84b',poor:'#ee776b',insufficient:'#9aa9b6'};
-function svg(tag, attrs = {}, text = '') {
-  const element = document.createElementNS(svgNS, tag);
-  Object.entries(attrs).forEach(([key,value]) => element.setAttribute(key, value));
-  if (text) element.textContent = text;
-  return element;
-}
+const graphColors = {good:'#2e9d59',attention:'#e9b949',poor:'#d64545',insufficient:'#8996a0'};
 function renderNetwork(container, graph) {
   container.replaceChildren();
-  const canvas = document.createElement('div'); canvas.className = 'graph-canvas';
-  const drawing = svg('svg', {class:'route-svg',viewBox:'0 0 1200 250',role:'img','aria-label':'NetworkX directed contract route graph'});
-  const defs = svg('defs');
-  Object.entries(graphColors).forEach(([key,color]) => {
-    const marker = svg('marker',{id:`arrow-${key}`,viewBox:'0 0 10 10',refX:'8',refY:'5',markerWidth:'8',markerHeight:'8',orient:'auto-start-reverse'});
-    marker.append(svg('path',{d:'M 0 0 L 10 5 L 0 10 z',fill:color})); defs.append(marker);
-  });
-  drawing.append(defs);
-  const centers = graph.nodes.map((_,index) => 115 + index * 323);
-  graph.edges.forEach((edge,index) => {
-    const sourceIndex = graph.nodes.findIndex(node => node.id === edge.source);
-    const destinationIndex = graph.nodes.findIndex(node => node.id === edge.destination);
-    if (sourceIndex < 0 || destinationIndex < 0) return;
-    const key = statusClass(edge.status), color = graphColors[key] || graphColors.insufficient;
-    const x1 = centers[sourceIndex] + 89, x2 = centers[destinationIndex] - 89, mid = (x1+x2)/2;
-    const metrics = edge.metrics;
-    drawing.append(svg('path',{d:`M ${x1} 181 L ${x2} 181`,fill:'none',stroke:color,'stroke-width':'3.5','stroke-linecap':'round','marker-end':`url(#arrow-${key})`}));
-    drawing.append(svg('rect',{x:mid-137,y:12,width:274,height:101,rx:14,class:'edge-card'}));
-    drawing.append(svg('circle',{cx:mid-108,cy:37,r:4.5,fill:color}));
-    drawing.append(svg('text',{x:mid-96,y:41,class:'edge-status',fill:color},`LEG ${index+1}  /  ${edge.status}`));
-    drawing.append(svg('text',{x:mid,y:68,class:'edge-metric'},`${fmt(metrics.trip_count,0)} contract trips  ·  ${fmtHours(metrics.average_travel_hours)}`));
-    drawing.append(svg('text',{x:mid,y:91,class:'edge-detail'},`Utilization  ${metric(metrics.load_utilization_pct,'%')}`));
-  });
+  if (!window.L) {
+    const unavailable = document.createElement('div');
+    unavailable.className = 'loading';
+    unavailable.textContent = 'Map tiles could not be loaded. Check your internet connection and refresh.';
+    container.append(unavailable);
+    return;
+  }
+  const mapElement = document.createElement('div'); mapElement.id = 'route-map'; mapElement.setAttribute('role','application');
+  mapElement.setAttribute('aria-label','Map of contract route hubs in Tamil Nadu');
+  container.append(mapElement);
+  const map = L.map(mapElement,{scrollWheelZoom:false,zoomControl:true}).setView([11.55,78.25],7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19,
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  const locations = {
+    Coimbatore:[11.0168,76.9558], Salem:[11.6643,78.1460],
+    Trichy:[10.7905,78.7047], Chennai:[13.0827,80.2707],
+    Tiruchirappalli:[10.7905,78.7047]
+  };
+  const pointFor = node => locations[node.id] || locations[node.label];
+  const points = new Map();
+  const bounds = [];
   graph.nodes.forEach((node,index) => {
-    const x = centers[index], group = svg('g',{class:'hub-node'});
-    group.append(svg('rect',{x:x-89,y:146,width:178,height:71,rx:16,class:'hub-card'}));
-    group.append(svg('circle',{cx:x-59,cy:181,r:13,class:'hub-icon'}));
-    group.append(svg('circle',{cx:x-59,cy:181,r:4,class:'hub-dot'}));
-    group.append(svg('text',{x:x+10,y:179,class:'hub-label'},node.label));
-    group.append(svg('text',{x:x+10,y:199,class:'hub-sub'},`HUB 0${index+1} · ROUTE NODE`));
-    drawing.append(group);
+    const point = pointFor(node);
+    if (!point) return;
+    points.set(node.id,point); bounds.push(point);
+    const marker = L.circleMarker(point,{radius:9,color:'#fff',weight:3,fillColor:'#167b55',fillOpacity:1});
+    marker.bindTooltip(`<strong>${node.label}</strong><br><span class="map-hub-caption">ROUTE HUB ${String(index+1).padStart(2,'0')}</span>`,{permanent:true,direction:'top',offset:[0,-8],className:'route-city-label'});
+    marker.addTo(map);
   });
-  canvas.append(drawing); container.append(canvas);
+  graph.edges.forEach((edge,index) => {
+    const source = points.get(edge.source), destination = points.get(edge.destination);
+    if (!source || !destination) return;
+    const key = statusClass(edge.status), color = graphColors[key] || graphColors.insufficient;
+    const metrics = edge.metrics;
+    const routeLine = L.polyline([source,destination],{color,weight:5,opacity:.92,lineCap:'round'}).addTo(map);
+    routeLine.bindPopup(`<strong>${edge.source} → ${edge.destination}</strong><br>${edge.status}<br>${fmt(metrics.trip_count,0)} contract trips<br>Avg travel: ${fmtHours(metrics.average_travel_hours)}<br>Utilization: ${metric(metrics.load_utilization_pct,'%')}`);
+    if (L.polylineDecorator) {
+      L.polylineDecorator(routeLine,{patterns:[{offset:'72%',repeat:0,symbol:L.Symbol.arrowHead({pixelSize:12,polygon:true,pathOptions:{color,fillOpacity:1,weight:1}})}]}).addTo(map);
+    }
+  });
+  if (bounds.length) map.fitBounds(bounds,{padding:[48,48]});
 }
 
 async function load() {
