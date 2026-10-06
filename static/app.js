@@ -65,7 +65,6 @@ async function load() {
     const dbStatus = document.getElementById('db-status');
     dbStatus.textContent = db.status === 'ok' ? 'PostgreSQL · read-only' : 'Database unavailable';
     dbStatus.parentElement.classList.toggle('online', db.status === 'ok');
-    document.getElementById('period').textContent = `${data.period.start} → ${data.period.end}`;
     document.getElementById('trip-count').textContent = fmt(data.summary.trip_count, 0);
     document.getElementById('utilization').textContent = metric(data.summary.load_utilization_pct, '%');
     document.getElementById('travel-time').textContent = fmtHours(data.summary.average_travel_hours);
@@ -75,15 +74,10 @@ async function load() {
       const m = s.metrics;
       return `<tr><td>${s.source} → ${s.destination}</td><td><span class="pill ${statusClass(s.status)}">${s.status}</span></td><td>${fmt(m.trip_count,0)}</td><td>${metric(m.total_load)}</td><td>${metric(m.average_load)}</td><td>${metric(m.average_capacity)}</td><td>${metric(m.load_utilization_pct,'%')}</td><td>${fmtMoment(m.earliest_departure)}<br>— ${fmtMoment(m.latest_arrival)}</td><td>${fmtTravelRange(m)}</td><td>${fmtPriceRange(m)}</td></tr>`;
     }).join('');
-    const recommendation = document.getElementById('route-status'); recommendation.textContent = data.recommendation.status; recommendation.className = `status-pill ${statusClass(data.recommendation.status)}`;
-    document.getElementById('route-reason').textContent = data.recommendation.reason;
-    document.getElementById('notes').innerHTML = data.data_notes.map(note => `<li>${note}</li>`).join('');
   } catch (error) {
     document.getElementById('db-status').textContent = 'Database unavailable';
-    document.getElementById('period').textContent = 'Unable to load';
     document.getElementById('network').innerHTML = `<div class="loading">${error.message}</div>`;
     document.getElementById('segments').innerHTML = `<tr><td colspan="10" class="loading">${error.message}</td></tr>`;
-    document.getElementById('route-reason').textContent = error.message;
   }
 }
 load();

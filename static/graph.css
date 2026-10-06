@@ -1,12 +1,24 @@
 .graph-wrap { min-width: 0; }
+:root { background: #f3f7f7; color: #1e3440; }
+.topbar { border-bottom-color: #dce8e7; }
+.brand-mark { background: linear-gradient(145deg,#126b62,#174c55); color: #c7f5d9; box-shadow: 0 4px 12px #126b6226; }
+.kpi, .panel { border-color: #e0e9e7; box-shadow: 0 8px 26px #1b41400c, 0 1px 3px #1b414008; }
+.kpi { transition: transform .18s ease, box-shadow .18s ease; }
+.kpi:hover { transform: translateY(-2px); box-shadow: 0 12px 28px #1b414016; }
+.kpi-label { color: #718a89; }
+.kpi strong { color: #173d42; }
+.network-panel { padding: 26px; background: linear-gradient(145deg,#fff 0%,#fbfdfc 100%); }
+.section-head h2 { color: #173d42; }
+.eyebrow { color: #668985; }
 #route-map {
-  height: 430px;
+  height: clamp(520px, 72vh, 760px);
   width: 100%;
   overflow: hidden;
-  border: 1px solid #d7e0e6;
-  border-radius: 12px;
+  border: 1px solid #d9e5e2;
+  border-radius: 16px;
   background: #e8edf0;
   z-index: 0;
+  box-shadow: 0 10px 28px #163e3b16;
 }
 #route-map .leaflet-tile-pane { filter: saturate(.82) contrast(.97); }
 #route-map .leaflet-control-zoom a {
@@ -46,6 +58,7 @@
 .legend-poor { background: #d64545; }
 .legend-insufficient { background: #8996a0; }
 @media (max-width: 700px) {
-  #route-map { height: 360px; }
+  .network-panel { padding: 18px 14px; }
+  #route-map { height: max(420px, 62vh); border-radius: 12px; }
   .route-city-label { font-size: 11px; }
 }
