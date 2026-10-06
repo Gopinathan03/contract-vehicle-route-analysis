@@ -5,6 +5,7 @@
   <meta name="theme-color" content="#101d30">
   <title>Contract Vehicle Route Analysis</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/graph.css">
 </head>
 <body>
   <main class="shell">
@@ -25,8 +26,9 @@
       <article class="kpi"><div class="kpi-label">AVERAGE CONTRACT PRICE</div><strong id="contract-price">—</strong><small>Stored contract hire amount</small></article>
     </section>
     <section class="panel network-panel">
-      <div class="section-head"><div><div class="eyebrow">FIXED ROUTE NETWORK</div><h2>Three legs, four hubs</h2></div><span class="network-caption">Contract vehicles only</span></div>
-      <div id="network" class="network"><div class="loading">Loading route analysis…</div></div>
+      <div class="section-head"><div><div class="eyebrow">NETWORKX DIRECTED GRAPH</div><h2>Four hubs · three connected legs</h2></div><span class="network-caption">Contract vehicles only</span></div>
+      <div id="network" class="graph-wrap"><div class="loading">Loading route analysis…</div></div>
+      <div class="graph-legend"><span><i class="legend-good"></i>Good</span><span><i class="legend-attention"></i>Needs attention</span><span><i class="legend-poor"></i>Poor</span><span><i class="legend-insufficient"></i>Insufficient data</span></div>
     </section>
     <section class="panel">
       <div class="section-head"><div><div class="eyebrow">HISTORICAL PERFORMANCE</div><h2>Route segment details</h2></div></div>

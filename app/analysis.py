@@ -8,7 +8,7 @@ from psycopg import sql
 
 from app.config import Settings, get_settings
 from app.database import read_connection
-from app.models import Metrics, Recommendation, RouteAnalysis, Segment, Summary
+from app.models import GraphEdge, GraphNode, Metrics, NetworkGraph, Recommendation, RouteAnalysis, Segment, Summary
 
 HUBS = ("Coimbatore", "Salem", "Trichy", "Chennai")
 
@@ -235,5 +235,18 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     ]
     if not any(segment.metrics.travel_time_trip_count for segment in segments):
         notes.append("Travel time is Insufficient Data because matching dispatch and arrival event timestamps were unavailable.")
+    graph_dto = NetworkGraph(
+        nodes=[GraphNode(id=hub, label=hub) for hub in graph.nodes],
+        edges=[
+            GraphEdge(
+                source=source,
+                destination=destination,
+                status=edge["status"],
+                reason=edge["reason"],
+                metrics=Metrics(**{field: edge[field] for field in Metrics.model_fields}),
+            )
+            for source, destination, edge in graph.edges(data=True)
+        ],
+    )
     return RouteAnalysis(route=list(HUBS), period={"start": start, "end": end}, summary=summary,
-                         segments=segments, recommendation=_recommend(segments), data_notes=notes)
+                         graph=graph_dto, segments=segments, recommendation=_recommend(segments), data_notes=notes)

@@ -39,6 +39,24 @@ class Segment(BaseModel):
     metrics: Metrics
 
 
+class GraphNode(BaseModel):
+    id: str
+    label: str
+
+
+class GraphEdge(BaseModel):
+    source: str
+    destination: str
+    status: LegStatus
+    reason: str
+    metrics: Metrics
+
+
+class NetworkGraph(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
 class Summary(BaseModel):
     trip_count: int
     average_load: float | None
@@ -54,6 +72,7 @@ class Recommendation(BaseModel):
 
 class RouteAnalysis(BaseModel):
     route: list[str]
+    graph: NetworkGraph
     period: Period
     vehicle_type: Literal["CONTRACT"] = "CONTRACT"
     summary: Summary
