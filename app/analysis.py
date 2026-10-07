@@ -221,10 +221,12 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             loads = {row["tssno"]: _number(row["load"]) for row in cursor.fetchall()}
 
             waybill_query = sql.SQL("""
-                SELECT DISTINCT upper(trim(tssno)) AS tssno, trim(prefix) AS prefix, wayno
-                FROM {detail}
-                WHERE tssno = ANY(%s) AND prefix IS NOT NULL AND wayno IS NOT NULL
-            """).format(detail=detail_table)
+                SELECT DISTINCT upper(trim(d.tssno)) AS tssno,
+                       trim(w.prefix) AS prefix, w.wayno
+                FROM {detail} d
+                JOIN {waybill} w ON w.prefix = d.prefix AND w.wayno = d.wayno
+                WHERE d.tssno = ANY(%s) AND d.prefix IS NOT NULL AND d.wayno IS NOT NULL
+            """).format(detail=detail_table, waybill=waybill_table)
             cursor.execute(waybill_query, (tss_numbers,))
             waybill_rows = [dict(row) for row in cursor.fetchall()]
 
