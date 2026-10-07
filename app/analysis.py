@@ -97,6 +97,42 @@ def _aggregate(rows: list[dict[str, Any]], trip_rows: list[dict[str, Any]], sett
     return metrics, *_status(metrics, settings)
 
 
+def _full_route_totals(
+    path_edges: list[tuple[str, str]],
+    waybills_by_edge: dict[tuple[str, str], dict[tuple[str, str], set[str]]],
+    movements: dict[str, tuple[Any, Any]],
+    prices_by_tssno: dict[str, float | None],
+) -> tuple[float | None, float | None]:
+    if not path_edges:
+        return None, None
+
+    edge_waybills = [waybills_by_edge.get(edge, {}) for edge in path_edges]
+    common_waybills = set(edge_waybills[0]).intersection(*(set(items) for items in edge_waybills[1:]))
+    chains: dict[tuple[str, ...], tuple[Any, Any]] = {}
+    for waybill in common_waybills:
+        states: set[tuple[Any, Any, tuple[str, ...]]] = set()
+        for tssno in edge_waybills[0][waybill]:
+            departure, arrival = movements.get(tssno, (None, None))
+            if departure is not None and arrival is not None and arrival > departure:
+                states.add((departure, arrival, (tssno,)))
+        for leg_waybills in edge_waybills[1:]:
+            next_states: set[tuple[Any, Any, tuple[str, ...]]] = set()
+            for route_departure, previous_arrival, chain in states:
+                for tssno in leg_waybills[waybill]:
+                    departure, arrival = movements.get(tssno, (None, None))
+                    if departure is not None and arrival is not None and departure >= previous_arrival and arrival > departure:
+                        next_states.add((route_departure, arrival, chain + (tssno,)))
+            states = next_states
+            if not states:
+                break
+        for departure, arrival, chain in states:
+            chains.setdefault(chain, (departure, arrival))
+
+    durations = [(arrival - departure).total_seconds() / 3600 for departure, arrival in chains.values() if arrival > departure]
+    costs = [sum(prices_by_tssno[tssno] for tssno in chain) for chain in chains if all(prices_by_tssno.get(tssno) is not None for tssno in chain)]
+    return (mean(durations) if durations else None, mean(costs) if costs else None)
+
+
 def analyze(start: date, end: date) -> RouteAnalysis:
     settings = get_settings()
     codes = settings.station_codes
@@ -125,6 +161,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
           AND d.route = ANY(%s) AND d.tssno IS NOT NULL
     """).format(header=header_table, contract=contract_table)
 
+    waybill_rows: list[dict[str, Any]] = []
     with read_connection() as conn, conn.cursor() as cursor:
         cursor.execute(route_query, (list(codes), list(codes)))
         route_rows = cursor.fetchall()
@@ -173,6 +210,15 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             cursor.execute(load_query, (tss_numbers,))
             loads = {row["tssno"]: _number(row["load"]) for row in cursor.fetchall()}
 
+            waybill_query = sql.SQL("""
+                SELECT DISTINCT upper(trim(tssno)) AS tssno, trim(prefix) AS prefix, wayno
+                FROM {detail}
+                WHERE upper(trim(tssno)) = ANY(%s) AND prefix IS NOT NULL AND wayno IS NOT NULL
+            """).format(detail=detail_table)
+            normalized_tss_numbers = list({str(tssno).strip().upper() for tssno in tss_numbers})
+            cursor.execute(waybill_query, (normalized_tss_numbers,))
+            waybill_rows = [dict(row) for row in cursor.fetchall()]
+
             event_query = sql.SQL("""
                 SELECT upper(trim(tssno)) AS tssno,
                        min(date + time) FILTER (WHERE lower(trim(type)) = 'despatch') AS departure,
@@ -186,11 +232,18 @@ def analyze(start: date, end: date) -> RouteAnalysis:
 
     rows_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     trips_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    edge_by_tssno: dict[str, tuple[str, str]] = {}
+    prices_by_tssno_values: dict[str, set[float]] = defaultdict(set)
     for trip in trip_rows:
         edge = used_route_to_edge.get(trip["route_code"])
         if edge is None:
             continue
         trips_by_edge[edge].append(trip)
+        normalized_tssno = str(trip["tssno"]).strip().upper()
+        edge_by_tssno[normalized_tssno] = edge
+        price = _number(trip["contract_price"])
+        if price is not None:
+            prices_by_tssno_values[normalized_tssno].add(price)
         candidate_capacities = capacities.get(trip["vehicle_no"] or "", [])
         valid_capacity = [item for item in candidate_capacities if item[0] is not None and item[0] <= trip["trip_date"]]
         capacity = valid_capacity[-1][1] if valid_capacity else None
@@ -199,11 +252,21 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         rows_by_edge[edge].append({
             "load": loads.get(trip["tssno"]),
             "capacity": capacity,
-            "price": _number(trip["contract_price"]),
+            "price": price,
             "travel_hours": travel_hours,
             "departure": departure,
             "arrival": arrival,
         })
+
+    prices_by_tssno = {
+        tssno: mean(values) if values else None
+        for tssno, values in prices_by_tssno_values.items()
+    }
+    waybills_by_edge: dict[tuple[str, str], dict[tuple[str, str], set[str]]] = defaultdict(lambda: defaultdict(set))
+    for row in waybill_rows:
+        edge = edge_by_tssno.get(row["tssno"])
+        if edge is not None:
+            waybills_by_edge[edge][(str(row["prefix"]).strip(), str(row["wayno"]).strip())].add(row["tssno"])
 
     graph = nx.DiGraph()
     graph.add_nodes_from(HUBS)
@@ -241,18 +304,18 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     alternatives = []
     for path in paths:
         path_legs = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in zip(path, path[1:])]
+        route_edges = list(zip(path, path[1:]))
+        if len(path_legs) == 1:
+            full_time = path_legs[0].metrics.average_travel_hours
+            full_cost = path_legs[0].metrics.average_contract_vehicle_price
+        else:
+            full_time, full_cost = _full_route_totals(route_edges, waybills_by_edge, movements, prices_by_tssno)
         alternatives.append(RouteOption(
             cities=[city_by_code[code] for code in path],
             status=min(path_legs, key=lambda leg: {"POOR": 0, "NEEDS ATTENTION": 1, "INSUFFICIENT DATA": 2, "GOOD": 3}[leg.status]).status,
             legs=path_legs,
-            average_full_route_travel_hours=(
-                sum(leg.metrics.average_travel_hours for leg in path_legs)
-                if all(leg.metrics.average_travel_hours is not None for leg in path_legs) else None
-            ),
-            average_full_route_contract_price=(
-                sum(leg.metrics.average_contract_vehicle_price for leg in path_legs)
-                if all(leg.metrics.average_contract_vehicle_price is not None for leg in path_legs) else None
-            ),
+            average_full_route_travel_hours=full_time,
+            average_full_route_contract_price=full_cost,
         ))
     segments = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in used_edges]
 
@@ -271,7 +334,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
         f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
         "Route combinations include only Coimbatore-to-Chennai paths whose direct legs have contract trips in the requested analysis window. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
-        "Full-route average time and contract cost are estimated by summing the average values for each leg; individual legs are not matched to the same shipment.",
+        "For multi-leg routes, full-route time and contract cost use consecutive TSS trips linked by the same waybill across every leg; routes without a complete linked chain show Insufficient Data.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",
     ]
