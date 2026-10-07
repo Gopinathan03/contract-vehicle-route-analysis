@@ -108,28 +108,38 @@ def _full_route_totals(
 
     edge_waybills = [waybills_by_edge.get(edge, {}) for edge in path_edges]
     common_waybills = set(edge_waybills[0]).intersection(*(set(items) for items in edge_waybills[1:]))
-    chains: dict[tuple[str, ...], tuple[Any, Any]] = {}
+    route_journeys: list[tuple[tuple[str, ...], Any, Any]] = []
     for waybill in common_waybills:
-        states: set[tuple[Any, Any, tuple[str, ...]]] = set()
-        for tssno in edge_waybills[0][waybill]:
-            departure, arrival = movements.get(tssno, (None, None))
-            if departure is not None and arrival is not None and arrival > departure:
-                states.add((departure, arrival, (tssno,)))
-        for leg_waybills in edge_waybills[1:]:
-            next_states: set[tuple[Any, Any, tuple[str, ...]]] = set()
-            for route_departure, previous_arrival, chain in states:
-                for tssno in leg_waybills[waybill]:
-                    departure, arrival = movements.get(tssno, (None, None))
-                    if departure is not None and arrival is not None and departure >= previous_arrival and arrival > departure:
-                        next_states.add((route_departure, arrival, chain + (tssno,)))
-            states = next_states
-            if not states:
+        first_leg = sorted(
+            (tssno for tssno in edge_waybills[0][waybill] if movements.get(tssno, (None, None))[0] is not None),
+            key=lambda tssno: (movements[tssno][0], tssno),
+        )
+        for first_tssno in first_leg:
+            route_departure, previous_arrival = movements[first_tssno]
+            if previous_arrival is None or previous_arrival <= route_departure:
+                continue
+            chain = [first_tssno]
+            complete = True
+            for leg_waybills in edge_waybills[1:]:
+                next_trips = [
+                    tssno for tssno in leg_waybills[waybill]
+                    if movements.get(tssno, (None, None))[0] is not None
+                    and movements.get(tssno, (None, None))[1] is not None
+                    and movements[tssno][0] >= previous_arrival
+                    and movements[tssno][1] > movements[tssno][0]
+                ]
+                if not next_trips:
+                    complete = False
+                    break
+                next_tssno = min(next_trips, key=lambda tssno: (movements[tssno][0], movements[tssno][1], tssno))
+                chain.append(next_tssno)
+                previous_arrival = movements[next_tssno][1]
+            if complete:
+                route_journeys.append((tuple(chain), route_departure, previous_arrival))
                 break
-        for departure, arrival, chain in states:
-            chains.setdefault(chain, (departure, arrival))
 
-    durations = [(arrival - departure).total_seconds() / 3600 for departure, arrival in chains.values() if arrival > departure]
-    costs = [sum(prices_by_tssno[tssno] for tssno in chain) for chain in chains if all(prices_by_tssno.get(tssno) is not None for tssno in chain)]
+    durations = [(arrival - departure).total_seconds() / 3600 for _, departure, arrival in route_journeys if arrival > departure]
+    costs = [sum(prices_by_tssno[tssno] for tssno in chain) for chain, _, _ in route_journeys if all(prices_by_tssno.get(tssno) is not None for tssno in chain)]
     return (mean(durations) if durations else None, mean(costs) if costs else None)
 
 
@@ -213,10 +223,9 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             waybill_query = sql.SQL("""
                 SELECT DISTINCT upper(trim(tssno)) AS tssno, trim(prefix) AS prefix, wayno
                 FROM {detail}
-                WHERE upper(trim(tssno)) = ANY(%s) AND prefix IS NOT NULL AND wayno IS NOT NULL
+                WHERE tssno = ANY(%s) AND prefix IS NOT NULL AND wayno IS NOT NULL
             """).format(detail=detail_table)
-            normalized_tss_numbers = list({str(tssno).strip().upper() for tssno in tss_numbers})
-            cursor.execute(waybill_query, (normalized_tss_numbers,))
+            cursor.execute(waybill_query, (tss_numbers,))
             waybill_rows = [dict(row) for row in cursor.fetchall()]
 
             event_query = sql.SQL("""
