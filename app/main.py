@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.analysis import analyze, rolling_year_start
+from app.analysis import analyze, rolling_six_month_start
 from app.database import read_connection
 from app.models import RouteAnalysis
 
@@ -38,7 +38,7 @@ def contract_route_analysis(
 ) -> RouteAnalysis:
     today = datetime.now(ZoneInfo("Asia/Kolkata")).date()
     end = end_date or today
-    start = start_date or rolling_year_start(end)
+    start = start_date or rolling_six_month_start(end)
     if start > end:
         raise HTTPException(status_code=422, detail="startDate must be on or before endDate")
     try:

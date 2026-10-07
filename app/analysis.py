@@ -1,4 +1,5 @@
 from collections import defaultdict
+from calendar import monthrange
 from datetime import date
 from statistics import mean
 from typing import Any
@@ -13,11 +14,11 @@ from app.models import GraphEdge, GraphNode, Metrics, NetworkGraph, Recommendati
 HUBS = ("Coimbatore", "Salem", "Trichy", "Chennai")
 
 
-def rolling_year_start(end: date) -> date:
-    try:
-        return end.replace(year=end.year - 1)
-    except ValueError:  # 29 February
-        return end.replace(year=end.year - 1, day=28)
+def rolling_six_month_start(end: date) -> date:
+    month_index = end.year * 12 + end.month - 1 - 6
+    year, month_zero_based = divmod(month_index, 12)
+    month = month_zero_based + 1
+    return date(year, month, min(end.day, monthrange(year, month)[1]))
 
 
 def _number(value: Any) -> float | None:
