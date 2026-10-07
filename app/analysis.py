@@ -98,48 +98,48 @@ def _aggregate(rows: list[dict[str, Any]], trip_rows: list[dict[str, Any]], sett
 
 
 def _full_route_totals(
-    path_edges: list[tuple[str, str]],
-    waybills_by_edge: dict[tuple[str, str], dict[tuple[str, str], set[str]]],
+    path: list[str],
+    path_waybills: dict[str, set[str]],
+    movements_by_waybill: dict[str, list[tuple[str, Any]]],
     movements: dict[str, tuple[Any, Any]],
     prices_by_tssno: dict[str, float | None],
+    start: date,
+    end: date,
 ) -> tuple[float | None, float | None]:
-    if not path_edges:
+    if len(path) < 2:
         return None, None
 
-    edge_waybills = [waybills_by_edge.get(edge, {}) for edge in path_edges]
-    common_waybills = set(edge_waybills[0]).intersection(*(set(items) for items in edge_waybills[1:]))
-    route_journeys: list[tuple[tuple[str, ...], Any, Any]] = []
-    for waybill in common_waybills:
-        first_leg = sorted(
-            (tssno for tssno in edge_waybills[0][waybill] if movements.get(tssno, (None, None))[0] is not None),
-            key=lambda tssno: (movements[tssno][0], tssno),
-        )
-        for first_tssno in first_leg:
-            route_departure, previous_arrival = movements[first_tssno]
-            if previous_arrival is None or previous_arrival <= route_departure:
+    route_label = " → ".join(f"{source}-{destination}" for source, destination in zip(path, path[1:]))
+    waybills = path_waybills.get(route_label, set())
+    leg_count = len(path) - 1
+    route_journeys: list[tuple[float, float]] = []
+    for waybill in waybills:
+        ordered_movements = sorted(movements_by_waybill.get(waybill, []), key=lambda item: (item[1], item[0]))
+        for offset in range(max(0, len(ordered_movements) - leg_count + 1)):
+            chain = ordered_movements[offset:offset + leg_count]
+            if len(chain) != leg_count:
                 continue
-            chain = [first_tssno]
-            complete = True
-            for leg_waybills in edge_waybills[1:]:
-                next_trips = [
-                    tssno for tssno in leg_waybills[waybill]
-                    if movements.get(tssno, (None, None))[0] is not None
-                    and movements.get(tssno, (None, None))[1] is not None
-                    and movements[tssno][0] >= previous_arrival
-                    and movements[tssno][1] > movements[tssno][0]
-                ]
-                if not next_trips:
-                    complete = False
-                    break
-                next_tssno = min(next_trips, key=lambda tssno: (movements[tssno][0], movements[tssno][1], tssno))
-                chain.append(next_tssno)
-                previous_arrival = movements[next_tssno][1]
-            if complete:
-                route_journeys.append((tuple(chain), route_departure, previous_arrival))
-                break
+            tssnos = [tssno for tssno, _ in chain]
+            events = [movements.get(tssno, (None, None)) for tssno in tssnos]
+            departure, arrival = events[0][0], events[-1][1]
+            if not departure or not arrival or arrival <= departure:
+                continue
+            if not (start <= departure.date() <= end):
+                continue
+            if any(not dep or not arr or arr <= dep for dep, arr in events):
+                continue
+            if any(events[index][0] < events[index - 1][1] for index in range(1, len(events))):
+                continue
+            prices = [prices_by_tssno.get(tssno) for tssno in tssnos]
+            if any(price is None for price in prices):
+                continue
+            duration = (arrival - departure).total_seconds() / 3600
+            if duration > 0:
+                route_journeys.append((duration, sum(price for price in prices if price is not None)))
+            break
 
-    durations = [(arrival - departure).total_seconds() / 3600 for _, departure, arrival in route_journeys if arrival > departure]
-    costs = [sum(prices_by_tssno[tssno] for tssno in chain) for chain, _, _ in route_journeys if all(prices_by_tssno.get(tssno) is not None for tssno in chain)]
+    durations = [duration for duration, _ in route_journeys]
+    costs = [cost for _, cost in route_journeys]
     return (mean(durations) if durations else None, mean(costs) if costs else None)
 
 
@@ -154,6 +154,8 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     detail_table = sql.Identifier(settings.db_schema, "tbl_despatch_detl")
     waybill_table = sql.Identifier(settings.db_schema, "wbhead")
     events_table = sql.Identifier(settings.db_schema, "tbl_veharrival_despatch")
+    waybill_paths_table = sql.Identifier(settings.db_schema, "network_waybill_paths")
+    dispatch_movements_table = sql.Identifier(settings.db_schema, "network_dispatch_movements")
     # Read direct links among the configured hubs. Contract trips in the
     # requested analysis window determine which links and paths are active.
     route_query = sql.SQL("""
@@ -171,7 +173,12 @@ def analyze(start: date, end: date) -> RouteAnalysis:
           AND d.route = ANY(%s) AND d.tssno IS NOT NULL
     """).format(header=header_table, contract=contract_table)
 
-    waybill_rows: list[dict[str, Any]] = []
+    paths: list[list[str]] = []
+    path_waybills: dict[str, set[str]] = defaultdict(set)
+    movements_by_waybill: dict[str, list[tuple[str, Any]]] = defaultdict(list)
+    route_contract_prices: dict[str, float | None] = {}
+    movements: dict[str, tuple[Any, Any]] = {}
+    contract_waybills: set[str] = set()
     with read_connection() as conn, conn.cursor() as cursor:
         cursor.execute(route_query, (list(codes), list(codes)))
         route_rows = cursor.fetchall()
@@ -188,6 +195,15 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             trip_rows = []
         active_codes = {row["route_code"] for row in trip_rows}
         used_route_to_edge = {code: pair for code, pair in route_to_edge.items() if code in active_codes}
+
+        route_codes_graph = nx.DiGraph()
+        route_codes_graph.add_nodes_from(codes)
+        route_codes_graph.add_edges_from(used_route_to_edge.values())
+        paths = sorted(
+            nx.all_simple_paths(route_codes_graph, codes[0], codes[-1]),
+            key=lambda path: (len(path), tuple(path)),
+        ) if nx.has_path(route_codes_graph, codes[0], codes[-1]) else []
+        path_labels = [" → ".join(f"{source}-{destination}" for source, destination in zip(path, path[1:])) for path in paths]
 
         tss_numbers = list({row["tssno"] for row in trip_rows if row["tssno"]})
         vehicle_numbers = list({row["vehicle_no"] for row in trip_rows if row["vehicle_no"]})
@@ -220,26 +236,67 @@ def analyze(start: date, end: date) -> RouteAnalysis:
             cursor.execute(load_query, (tss_numbers,))
             loads = {row["tssno"]: _number(row["load"]) for row in cursor.fetchall()}
 
-            waybill_query = sql.SQL("""
-                SELECT DISTINCT upper(trim(d.tssno)) AS tssno,
-                       trim(w.prefix) AS prefix, w.wayno
+            waybill_ids_query = sql.SQL("""
+                SELECT DISTINCT upper(trim(w.prefix) || trim(w.wayno::text)) AS wbid
                 FROM {detail} d
                 JOIN {waybill} w ON w.prefix = d.prefix AND w.wayno = d.wayno
                 WHERE d.tssno = ANY(%s) AND d.prefix IS NOT NULL AND d.wayno IS NOT NULL
             """).format(detail=detail_table, waybill=waybill_table)
-            cursor.execute(waybill_query, (tss_numbers,))
-            waybill_rows = [dict(row) for row in cursor.fetchall()]
+            cursor.execute(waybill_ids_query, (tss_numbers,))
+            contract_waybills = {row["wbid"] for row in cursor.fetchall() if row["wbid"]}
 
+        path_tssnos: set[str] = set()
+        if path_labels and contract_waybills:
+            path_query = sql.SQL("""
+                SELECT DISTINCT p.wbid, p.route_combination
+                FROM {paths} p
+                WHERE p.wbid = ANY(%s) AND p.route_combination = ANY(%s)
+            """).format(paths=waybill_paths_table)
+            cursor.execute(path_query, (list(contract_waybills), path_labels))
+            path_wbids: set[str] = set()
+            for row in cursor.fetchall():
+                waybill = str(row["wbid"]).strip().upper()
+                path_waybills[row["route_combination"]].add(waybill)
+                path_wbids.add(waybill)
+
+            if path_wbids:
+                movement_query = sql.SQL("""
+                    SELECT DISTINCT upper(trim(wbid)) AS wbid,
+                           upper(trim(tssno)) AS tssno, tssdate
+                    FROM {dispatch_movements}
+                    WHERE wbid = ANY(%s) AND tssdate >= %s::date - interval '1 day'
+                    ORDER BY upper(trim(wbid)), tssdate, upper(trim(tssno))
+                """).format(dispatch_movements=dispatch_movements_table)
+                cursor.execute(movement_query, (list(path_wbids), start))
+                for row in cursor.fetchall():
+                    if row["tssno"] and row["tssdate"]:
+                        movements_by_waybill[row["wbid"]].append((row["tssno"], row["tssdate"]))
+                        path_tssnos.add(row["tssno"])
+
+        event_tssnos = set(tss_numbers) | path_tssnos
+        if event_tssnos:
             event_query = sql.SQL("""
                 SELECT upper(trim(tssno)) AS tssno,
                        min(date + time) FILTER (WHERE lower(trim(type)) = 'despatch') AS departure,
                        max(date + time) FILTER (WHERE lower(trim(type)) = 'arrival') AS arrival
                 FROM {events}
-                WHERE tssno = ANY(%s) AND lower(trim(type)) IN ('despatch', 'arrival')
+                WHERE upper(trim(tssno)) = ANY(%s) AND lower(trim(type)) IN ('despatch', 'arrival')
                 GROUP BY upper(trim(tssno))
             """).format(events=events_table)
-            cursor.execute(event_query, (tss_numbers,))
+            cursor.execute(event_query, (list(event_tssnos),))
             movements = {row["tssno"]: (row["departure"], row["arrival"]) for row in cursor.fetchall()}
+
+        if path_tssnos:
+            price_query = sql.SQL("""
+                SELECT upper(trim(tssno)) AS tssno, avg(tothire::double precision) AS price
+                FROM {contract}
+                WHERE upper(trim(tssno)) = ANY(%s)
+                GROUP BY upper(trim(tssno))
+            """).format(contract=contract_table)
+            cursor.execute(price_query, (list(path_tssnos),))
+            route_contract_prices = {
+                row["tssno"]: _number(row["price"]) for row in cursor.fetchall()
+            }
 
     rows_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     trips_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -273,12 +330,7 @@ def analyze(start: date, end: date) -> RouteAnalysis:
         tssno: mean(values) if values else None
         for tssno, values in prices_by_tssno_values.items()
     }
-    waybills_by_edge: dict[tuple[str, str], dict[tuple[str, str], set[str]]] = defaultdict(lambda: defaultdict(set))
-    for row in waybill_rows:
-        edge = edge_by_tssno.get(row["tssno"])
-        if edge is not None:
-            waybills_by_edge[edge][(str(row["prefix"]).strip(), str(row["wayno"]).strip())].add(row["tssno"])
-
+    prices_by_tssno.update({tssno: price for tssno, price in route_contract_prices.items() if price is not None})
     graph = nx.DiGraph()
     graph.add_nodes_from(HUBS)
     segments_by_edge: dict[tuple[str, str], Segment] = {}
@@ -315,12 +367,14 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     alternatives = []
     for path in paths:
         path_legs = [segments_by_edge[(city_by_code[a], city_by_code[b])] for a, b in zip(path, path[1:])]
-        route_edges = list(zip(path, path[1:]))
-        if len(path_legs) == 1:
+        full_time, full_cost = _full_route_totals(
+            path, path_waybills, movements_by_waybill, movements, prices_by_tssno, start, end
+        )
+        if len(path_legs) == 1 and full_time is None:
+            # A direct leg is already the full route; retain its measured trip
+            # average when no canonical WHEAD path record exists for that trip.
             full_time = path_legs[0].metrics.average_travel_hours
             full_cost = path_legs[0].metrics.average_contract_vehicle_price
-        else:
-            full_time, full_cost = _full_route_totals(route_edges, waybills_by_edge, movements, prices_by_tssno)
         alternatives.append(RouteOption(
             cities=[city_by_code[code] for code in path],
             status=min(path_legs, key=lambda leg: {"POOR": 0, "NEEDS ATTENTION": 1, "INSUFFICIENT DATA": 2, "GOOD": 3}[leg.status]).status,
@@ -344,8 +398,8 @@ def analyze(start: date, end: date) -> RouteAnalysis:
     notes = [
         "Load is summed from dispatched waybills joined to wbhead.chargewt; values retain the database's unspecified unit.",
         f"Load utilization converts charge-weight kilograms to capacity metric tons with LOAD_TO_CAPACITY_FACTOR={settings.load_to_capacity_factor}.",
-        "Route combinations include only Coimbatore-to-Chennai paths whose direct legs have contract trips in the requested analysis window. Summary movement counts are leg movements; the database does not provide a through-route shipment identity.",
-        "For multi-leg routes, full-route time and contract cost use consecutive TSS trips linked by the same waybill across every leg; routes without a complete linked chain show Insufficient Data.",
+        "Route combinations include only Coimbatore-to-Chennai paths whose direct legs have contract trips in the requested analysis window. Leg movements can belong to different shipments, so route totals use matched waybill paths.",
+        "Full-route time is the first dispatch to final arrival for a chronological, complete WHEAD waybill path. Full-route contract cost sums the leg hire amounts for that same path; incomplete paths or legs without contract hire are excluded.",
         "Status bands are configurable defaults in .env.example and should be aligned with approved operating targets.",
         "Vehicle capacity uses the latest capacity record on or before each trip date; trips without a dated capacity record are excluded from utilization.",
     ]
